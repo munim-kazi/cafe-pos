@@ -1,7 +1,13 @@
 import type { NextConfig } from "next";
+import { securityHeaders } from "@/lib/security/headers";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  headers: async () => [
+    {
+      source: "/(.*)",
+      headers: securityHeaders,
+    },
+  ],
 };
 
 export default nextConfig;

@@ -1,0 +1,641 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth & Users ────────────────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+  KITCHEN
+}
+
+model User {
+  id             String         @id @default(cuid())
+  name           String
+  email          String         @unique
+  password       String
+  role           Role           @default(CASHIER)
+  active         Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  orders         Order[]
+  payments       Payment[]
+  refunds        Refund[]
+  auditLogs      AuditLog[]
+  journalEntries JournalEntry[]
+  expenses       Expense[]
+  purchases      Purchase[]
+
+  @@index([role])
+  @@index([active])
+  @@index([email])
+}
+
+// ─── Menu & Relational Variants/Addons ───────────────────────────────────────
+
+model Category {
+  id        String     @id @default(cuid())
+  name      String     @unique
+  sortOrder Int        @default(0)
+  active    Boolean    @default(true)
+  items     MenuItem[]
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([sortOrder])
+  @@index([active])
+}
+
+model MenuItem {
+  id          String      @id @default(cuid())
+  name        String
+  description String?
+  categoryId  String
+  category    Category    @relation(fields: [categoryId], references: [id])
+  basePrice   Decimal     @db.Decimal(10, 2)
+  image       String?
+  available   Boolean     @default(true)
+  prepTimeMin Int?
+  variants    Variant[]
+  orderItems  OrderItem[]
+  recipes     Recipe[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([categoryId])
+  @@index([available])
+  @@index([name])
+}
+
+model Variant {
+  id          String           @id @default(cuid())
+  menuItemId  String
+  menuItem    MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  name        String
+  priceAdjust Decimal          @default(0) @db.Decimal(10, 2)
+  available   Boolean          @default(true)
+  addons      AddonOnVariant[]
+  orderItems  OrderItem[]
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@unique([menuItemId, name])
+  @@index([menuItemId])
+}
+
+model Addon {
+  id              String           @id @default(cuid())
+  name            String
+  price           Decimal          @default(0) @db.Decimal(10, 2)
+  available       Boolean          @default(true)
+  variantAddons   AddonOnVariant[]
+  orderItemAddons OrderItemAddon[]
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  @@index([available])
+}
+
+model AddonOnVariant {
+  id        String  @id @default(cuid())
+  variantId String
+  variant   Variant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  addonId   String
+  addon     Addon   @relation(fields: [addonId], references: [id], onDelete: Cascade)
+
+  @@unique([variantId, addonId])
+  @@index([variantId])
+  @@index([addonId])
+}
+
+// ─── Customers & Suppliers ───────────────────────────────────────────────────
+
+model Customer {
+  id          String               @id @default(cuid())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  dueBalance  Decimal              @default(0) @db.Decimal(10, 2)
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  orders      Order[]
+  receivables AccountsReceivable[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model Supplier {
+  id         String            @id @default(cuid())
+  name       String
+  company    String?
+  phone      String?
+  email      String?
+  address    String?
+  dueBalance Decimal           @default(0) @db.Decimal(10, 2)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  purchases  Purchase[]
+  payables   AccountsPayable[]
+
+  @@index([name])
+  @@index([company])
+}
+
+// ─── Tables ──────────────────────────────────────────────────────────────────
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+}
+
+model Table {
+  id        String      @id @default(cuid())
+  number    Int         @unique
+  capacity  Int         @default(4)
+  status    TableStatus @default(AVAILABLE)
+  section   String?
+  orders    Order[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([status])
+}
+
+// ─── Orders ──────────────────────────────────────────────────────────────────
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  READY
+  SERVED
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+model Order {
+  id             String         @id @default(cuid())
+  orderNumber    String         @unique
+  type           OrderType      @default(DINE_IN)
+  tableId        String?
+  table          Table?         @relation(fields: [tableId], references: [id])
+  customerId     String?
+  customer       Customer?      @relation(fields: [customerId], references: [id])
+  status         OrderStatus    @default(PENDING)
+  subtotal       Decimal        @db.Decimal(10, 2)
+  discountAmount Decimal        @default(0) @db.Decimal(10, 2)
+  taxRate        Decimal        @default(0) @db.Decimal(5, 2)
+  taxAmount      Decimal        @default(0) @db.Decimal(10, 2)
+  grandTotal     Decimal        @db.Decimal(10, 2)
+  paymentStatus  PaymentStatus  @default(UNPAID)
+  notes          String?
+  createdById    String
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  items          OrderItem[]
+  payments       Payment[]
+  kots           KOT[]
+  refunds        Refund[]
+  journalEntries JournalEntry[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([orderNumber])
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([createdAt])
+  @@index([tableId])
+  @@index([customerId])
+  @@index([createdById])
+}
+
+model OrderItem {
+  id         String           @id @default(cuid())
+  orderId    String
+  order      Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId String
+  menuItem   MenuItem         @relation(fields: [menuItemId], references: [id])
+  variantId  String?
+  variant    Variant?         @relation(fields: [variantId], references: [id])
+  name       String
+  quantity   Int              @default(1)
+  unitPrice  Decimal          @db.Decimal(10, 2)
+  discount   Decimal          @default(0) @db.Decimal(10, 2)
+  subtotal   Decimal          @db.Decimal(10, 2)
+  addons     OrderItemAddon[]
+  createdAt  DateTime         @default(now())
+
+  @@index([orderId])
+  @@index([menuItemId])
+}
+
+model OrderItemAddon {
+  id          String    @id @default(cuid())
+  orderItemId String
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  addonId     String
+  addon       Addon     @relation(fields: [addonId], references: [id])
+  name        String
+  price       Decimal   @db.Decimal(10, 2)
+
+  @@index([orderItemId])
+}
+
+// ─── Payments & Refunds ──────────────────────────────────────────────────────
+
+enum PaymentMethod {
+  CASH
+  CARD
+  MOBILE
+  BANK_TRANSFER
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  orderId      String
+  order        Order         @relation(fields: [orderId], references: [id])
+  method       PaymentMethod @default(CASH)
+  amount       Decimal       @db.Decimal(10, 2)
+  reference    String?
+  receivedById String
+  receivedBy   User          @relation(fields: [receivedById], references: [id])
+  journalEntry JournalEntry?
+  createdAt    DateTime      @default(now())
+
+  @@index([orderId])
+  @@index([method])
+  @@index([createdAt])
+}
+
+model Refund {
+  id            String        @id @default(cuid())
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id])
+  amount        Decimal       @db.Decimal(10, 2)
+  reason        String
+  processedById String
+  processedBy   User          @relation(fields: [processedById], references: [id])
+  journalEntry  JournalEntry?
+  createdAt     DateTime      @default(now())
+
+  @@index([orderId])
+  @@index([createdAt])
+}
+
+// ─── Kitchen Order Ticket ────────────────────────────────────────────────────
+
+enum KOTStatus {
+  PENDING
+  IN_PROGRESS
+  READY
+  SERVED
+}
+
+model KOT {
+  id        String    @id @default(cuid())
+  orderId   String
+  order     Order     @relation(fields: [orderId], references: [id])
+  kotNumber Int
+  status    KOTStatus @default(PENDING)
+  items     KOTItem[]
+  notes     String?
+  printedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@unique([orderId, kotNumber])
+  @@index([status])
+  @@index([orderId])
+}
+
+model KOTItem {
+  id          String    @id @default(cuid())
+  kotId       String
+  kot         KOT       @relation(fields: [kotId], references: [id], onDelete: Cascade)
+  orderItemId String
+  name        String
+  quantity    Int
+  addons      String?
+  notes       String?
+  status      KOTStatus @default(PENDING)
+
+  @@index([kotId])
+  @@index([status])
+}
+
+// ─── Inventory & Recipes ─────────────────────────────────────────────────────
+
+model Ingredient {
+  id                String          @id @default(cuid())
+  name              String          @unique
+  unit              String
+  currentStock      Decimal         @default(0) @db.Decimal(10, 3)
+  lowStockThreshold Decimal         @default(0) @db.Decimal(10, 3)
+  costPerUnit       Decimal         @db.Decimal(10, 2)
+  active            Boolean         @default(true)
+  stockMovements    StockMovement[]
+  recipeItems       Recipe[]
+  purchaseItems     PurchaseItem[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([name])
+  @@index([active])
+  @@index([currentStock])
+}
+
+model Recipe {
+  id           String     @id @default(cuid())
+  menuItemId   String
+  menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  quantity     Decimal    @db.Decimal(10, 3)
+
+  @@unique([menuItemId, ingredientId])
+  @@index([menuItemId])
+  @@index([ingredientId])
+}
+
+enum StockMovementType {
+  PURCHASE
+  USAGE
+  WASTE
+  ADJUSTMENT
+  RETURN
+}
+
+model StockMovement {
+  id            String            @id @default(cuid())
+  ingredientId  String
+  ingredient    Ingredient        @relation(fields: [ingredientId], references: [id])
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(10, 3)
+  unitCost      Decimal           @db.Decimal(10, 2)
+  referenceType String?
+  referenceId   String?
+  notes         String?
+  journalEntry  JournalEntry?
+  createdAt     DateTime          @default(now())
+
+  @@index([ingredientId])
+  @@index([type])
+  @@index([createdAt])
+  @@index([referenceType, referenceId])
+}
+
+// ─── Purchases ───────────────────────────────────────────────────────────────
+
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  CANCELLED
+}
+
+model Purchase {
+  id             String         @id @default(cuid())
+  purchaseNumber String         @unique
+  supplierId     String
+  supplier       Supplier       @relation(fields: [supplierId], references: [id])
+  date           DateTime       @default(now())
+  subtotal       Decimal        @db.Decimal(10, 2)
+  taxAmount      Decimal        @default(0) @db.Decimal(10, 2)
+  total          Decimal        @db.Decimal(10, 2)
+  isCredit       Boolean        @default(false)
+  paidAmount     Decimal        @default(0) @db.Decimal(10, 2)
+  status         PurchaseStatus @default(DRAFT)
+  notes          String?
+  createdById    String
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  items          PurchaseItem[]
+  journalEntry   JournalEntry?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([purchaseNumber])
+  @@index([supplierId])
+  @@index([date])
+  @@index([status])
+}
+
+model PurchaseItem {
+  id           String     @id @default(cuid())
+  purchaseId   String
+  purchase     Purchase   @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  ingredientId String
+  ingredient   Ingredient @relation(fields: [ingredientId], references: [id])
+  quantity     Decimal    @db.Decimal(10, 3)
+  unitCost     Decimal    @db.Decimal(10, 2)
+  total        Decimal    @db.Decimal(10, 2)
+
+  @@index([purchaseId])
+  @@index([ingredientId])
+}
+
+// ─── Accounting (Double-Entry) ───────────────────────────────────────────────
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum NormalBalance {
+  DEBIT
+  CREDIT
+}
+
+model Account {
+  id            String           @id @default(cuid())
+  code          String           @unique
+  name          String
+  type          AccountType
+  normalBalance NormalBalance
+  parentId      String?
+  parent        Account?         @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children      Account[]        @relation("AccountHierarchy")
+  description   String?
+  active        Boolean          @default(true)
+  journalLines  JournalLine[]
+  balances      AccountBalance[]
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([code])
+  @@index([type])
+  @@index([parentId])
+}
+
+model JournalEntry {
+  id              String         @id @default(cuid())
+  entryNumber     String         @unique
+  date            DateTime       @default(now())
+  description     String
+  referenceType   String?
+  referenceId     String?
+  isReversal      Boolean        @default(false)
+  lines           JournalLine[]
+  createdById     String
+  createdBy       User           @relation(fields: [createdById], references: [id])
+  orderId         String?
+  order           Order?         @relation(fields: [orderId], references: [id])
+  paymentId       String?
+  payment         Payment?       @relation(fields: [paymentId], references: [id])
+  refundId        String?
+  refund          Refund?        @relation(fields: [refundId], references: [id])
+  purchaseId      String?
+  purchase        Purchase?      @relation(fields: [purchaseId], references: [id])
+  stockMovementId String?
+  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id])
+  expenseId       String?
+  expense         Expense?       @relation(fields: [expenseId], references: [id])
+  createdAt       DateTime       @default(now())
+
+  @@unique([orderId])
+  @@unique([paymentId])
+  @@unique([refundId])
+  @@unique([purchaseId])
+  @@unique([stockMovementId])
+  @@unique([expenseId])
+  @@index([entryNumber])
+  @@index([date])
+  @@index([referenceType, referenceId])
+  @@index([createdById])
+}
+
+model JournalLine {
+  id             String       @id @default(cuid())
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  accountId      String
+  account        Account      @relation(fields: [accountId], references: [id])
+  debit          Decimal      @default(0) @db.Decimal(12, 2)
+  credit         Decimal      @default(0) @db.Decimal(12, 2)
+  description    String?
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model AccountBalance {
+  id          String  @id @default(cuid())
+  accountId   String
+  account     Account @relation(fields: [accountId], references: [id])
+  year        Int
+  month       Int
+  debitTotal  Decimal @default(0) @db.Decimal(12, 2)
+  creditTotal Decimal @default(0) @db.Decimal(12, 2)
+  netBalance  Decimal @default(0) @db.Decimal(12, 2)
+
+  @@unique([accountId, year, month])
+  @@index([accountId])
+  @@index([year, month])
+}
+
+// ─── Accounts Receivable & Payable ───────────────────────────────────────────
+
+model AccountsReceivable {
+  id         String    @id @default(cuid())
+  customerId String
+  customer   Customer  @relation(fields: [customerId], references: [id])
+  orderId    String?
+  amount     Decimal   @db.Decimal(10, 2)
+  paidAmount Decimal   @default(0) @db.Decimal(10, 2)
+  dueDate    DateTime?
+  status     String    @default("OUTSTANDING")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model AccountsPayable {
+  id         String    @id @default(cuid())
+  supplierId String
+  supplier   Supplier  @relation(fields: [supplierId], references: [id])
+  purchaseId String?
+  amount     Decimal   @db.Decimal(10, 2)
+  paidAmount Decimal   @default(0) @db.Decimal(10, 2)
+  dueDate    DateTime?
+  status     String    @default("OUTSTANDING")
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([supplierId])
+  @@index([status])
+}
+
+// ─── Expenses ────────────────────────────────────────────────────────────────
+
+model Expense {
+  id           String        @id @default(cuid())
+  description  String
+  amount       Decimal       @db.Decimal(10, 2)
+  accountId    String
+  date         DateTime      @default(now())
+  receipt      String?
+  createdById  String
+  createdBy    User          @relation(fields: [createdById], references: [id])
+  journalEntry JournalEntry?
+  createdAt    DateTime      @default(now())
+
+  @@index([date])
+  @@index([accountId])
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────────
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  APPROVE
+  REVERSE
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id])
+  action    AuditAction
+  entity    String
+  entityId  String?
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime    @default(now())
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([action])
+  @@index([createdAt])
+}
