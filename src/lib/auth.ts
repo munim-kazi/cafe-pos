@@ -23,6 +23,8 @@ declare module "@auth/core/jwt" {
 }
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
+  basePath: "/api/auth",
   providers: [
     Credentials({
       credentials: {
